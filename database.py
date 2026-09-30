@@ -13,6 +13,14 @@ class DomainError(ValueError):
     """Business rule violation."""
 
 
+class ConflictError(DomainError):
+    """Stale version or state conflict; maps to HTTP 409."""
+
+    def __init__(self, message: str, payload: dict | None = None) -> None:
+        super().__init__(message)
+        self.payload = payload or {}
+
+
 class CorpusDB:
     """A small multi-annotator corpus governance service."""
 
