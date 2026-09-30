@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from database import CorpusDB, DomainError
+from database import ConflictError, CorpusDB, DomainError
 
 BASE = Path(__file__).resolve().parent
 DB_PATH = os.environ.get("CORPUS_DB", str(BASE / "corpus.db"))
@@ -50,6 +50,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/state":
                 return self._json(200, self.db.snapshot())
+            if len(parts) == 4 and parts[:2] == ["api", "batches"] and parts[3] == "state":
+                return self._json(200, self.db.get_batch(int(parts[2])))
             if len(parts) == 3 and parts[:2] == ["api", "items"]:
                 user_id = int(parse_qs(parsed.query).get("user_id", [0])[0])
                 return self._json(200, self.db.get_item_for_user(int(parts[2]), user_id))
@@ -60,6 +62,8 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 4 and parts[:2] == ["api", "batches"] and parts[3] == "gold":
                 return self._json(200, self.db.export_gold(int(parts[2])))
             self._json(404, {"ok": False, "error": "接口不存在"})
+        except ConflictError as exc:
+            self._json(409, {"ok": False, "error": str(exc), **exc.details})
         except (DomainError, ValueError) as exc:
             self._json(400, {"ok": False, "error": str(exc)})
 
@@ -84,8 +88,17 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/discussions":
                 return self._json(201, {"ok": True, "id": self.db.add_discussion(int(body.get("item_id", 0)), int(body.get("author_id", 0)), str(body.get("body", "")), bool(body.get("contains_answer", False)))})
             if len(parts) == 4 and parts[:2] == ["api", "batches"] and parts[3] == "freeze":
-                return self._json(200, {"ok": True, **self.db.freeze_batch(int(parts[2]), int(body.get("manager_id", 0)))})
+                expected_version = body.get("expected_version")
+                result = self.db.freeze_batch(
+                    int(parts[2]),
+                    int(body.get("manager_id", 0)),
+                    None if expected_version is None else int(expected_version),
+                    body.get("request_id"),
+                )
+                return self._json(200, result)
             self._json(404, {"ok": False, "error": "接口不存在"})
+        except ConflictError as exc:
+            self._json(409, {"ok": False, "error": str(exc), **exc.details})
         except (DomainError, ValueError) as exc:
             self._json(400, {"ok": False, "error": str(exc)})
 
